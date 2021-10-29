@@ -1,7 +1,7 @@
 [package]
 name = "rss-gobbler"
-version = "0.2.0"
-edition = "2018"
+version = "0.2.1"
+edition = "2021"
 authors = ["Jesse Wyatt"]
 description = "A simple app for async mass downloading podcasts"
 

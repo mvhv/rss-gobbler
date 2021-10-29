@@ -1,10 +1,8 @@
 use crate::AsyncResult;
 
 use clap::{App, Arg};
-
-use regex::{self, Regex};
-
 use hyper::Uri;
+use regex::Regex;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const APP_AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
@@ -19,22 +17,32 @@ pub struct AppConfig {
     option_exclude_regex: Option<Regex>,
 }
 
-
 impl AppConfig {
-    pub fn new(feed_url: &str, output_path: &str, include_pattern: Option<&str>, exclude_pattern: Option<&str>) -> Result<AppConfig, regex::Error> {
+    /// Constructs a new AppConfig including compiled regular expressions given input patterns
+    pub fn new(
+        feed_url: &str,
+        output_path: &str,
+        include_pattern: Option<&str>,
+        exclude_pattern: Option<&str>,
+    ) -> Result<AppConfig, regex::Error> {
         let option_include_regex = match include_pattern {
-            Some(pattern) => Some(Regex::new(pattern.into())?),
+            Some(pattern) => Some(Regex::new(pattern)?),
             None => None,
         };
 
         let option_exclude_regex = match exclude_pattern {
-            Some(pattern) => Some(Regex::new(pattern.into())?),
+            Some(pattern) => Some(Regex::new(pattern)?),
             None => None,
         };
 
         let feed_uri = feed_url.parse().unwrap();
-        
-        Ok(AppConfig{ feed_uri, output_path: String::from(output_path), option_include_regex, option_exclude_regex})
+
+        Ok(AppConfig {
+            feed_uri,
+            output_path: String::from(output_path),
+            option_include_regex,
+            option_exclude_regex,
+        })
     }
 
     pub fn get_feed_uri(&self) -> Uri {
@@ -44,20 +52,6 @@ impl AppConfig {
     pub fn get_output_directory(&self) -> String {
         self.output_path.clone()
     }
-
-    // fn include(&self) -> Option<&Regex> {
-    //     match self.option_include_regex {
-    //         Some(r) => &r,
-    //         _ => None,
-    //     }
-    // }
-
-    // fn exclude(&self) -> Option<&Regex> {
-    //     match self.option_exclude_regex {
-    //         Some(r) => &r,
-    //         _ => None,
-    //     }
-    // }
 
     pub fn check_valid(&self, pattern: &str) -> bool {
         let include = if let Some(regex) = &self.option_include_regex {
@@ -75,7 +69,7 @@ impl AppConfig {
         include && !exclude
     }
 
-    
+    /// Parse clap commandline arguments, and construct a new AppConfig
     pub fn from_cli_args() -> AsyncResult<AppConfig> {
         // parse cmdline args
         let matches = App::new("RSS Gobbler")
@@ -88,7 +82,7 @@ impl AppConfig {
                     .long("feed")
                     .value_name("URL")
                     .help("The URL of the RSS feed to download.")
-                    .required(true)
+                    .required(true),
             )
             .arg(
                 Arg::with_name("directory")
@@ -96,7 +90,7 @@ impl AppConfig {
                     .long("dir")
                     .value_name("OUTPUT_PATH")
                     .help("The path to store downloaded episodes.")
-                    .default_value(DEFAULT_DIRECTORY)
+                    .default_value(DEFAULT_DIRECTORY),
             )
             .arg(
                 Arg::with_name("include_pattern")
@@ -104,7 +98,7 @@ impl AppConfig {
                     .long("include")
                     .value_name("REGEX_PATTERN")
                     .help("An optional regex pattern to for episodes to include.")
-                    .required(false)
+                    .required(false),
             )
             .arg(
                 Arg::with_name("exclude_pattern")
@@ -112,19 +106,17 @@ impl AppConfig {
                     .long("exclude")
                     .value_name("REGEX_PATTERN")
                     .help("An optional regex pattern to for episodes to exclude.")
-                    .required(false)
+                    .required(false),
             )
             .get_matches();
-        
         let feed_url = matches.value_of("feed_url").unwrap();
         let output_path = matches.value_of("feed_url").unwrap();
         let include_pattern = matches.value_of("include_pattern");
         let exclude_pattern = matches.value_of("exclude_pattern");
-
+        // compile regex and return config
         match AppConfig::new(feed_url, output_path, include_pattern, exclude_pattern) {
             Ok(config) => Ok(config),
             Err(err) => Err(format!("Failed to build AppConfig: {}", err).into()),
         }
     }
 }
-

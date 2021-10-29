@@ -1,4 +1,6 @@
-use clap::{App, Arg};
+mod config;
+
+use config::AppConfig;
 
 use hyper::{
     body::{self, HttpBody},
@@ -12,51 +14,39 @@ use rss::{Channel, Enclosure, Item};
 
 use tokio::{fs, io::AsyncWriteExt as _, task};
 
-use futures::{stream::FuturesUnordered, StreamExt as _};
+use futures::stream::{FuturesUnordered, StreamExt};
 
 use tracing::{error, info};
 
-type BoxedSendSyncError = Box<dyn std::error::Error + Send + Sync>;
-type AsyncResult<T> = Result<T, BoxedSendSyncError>;
-type HttpsClient = hyper::Client<HttpsConnector<HttpConnector>>;
+use std::sync::Arc;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
+pub type BoxedSendSyncError = Box<dyn std::error::Error + Send + Sync>;
+pub type AsyncResult<T> = Result<T, BoxedSendSyncError>;
+pub type HttpsClient = hyper::Client<HttpsConnector<HttpConnector>>;
+
 
 #[tokio::main]
 async fn main() -> AsyncResult<()> {
     // install global tracer
     tracing_subscriber::fmt::init();
 
-    // parse cmdline args
-    let matches = App::new("RSS Gobbler")
-        .version(VERSION)
-        .author(AUTHORS)
-        .arg(
-            Arg::with_name("feed_url")
-                .short("f")
-                .long("feed")
-                .value_name("URL")
-                .help("The URL of the RSS feed to download")
-                .required(true),
-        )
-        .get_matches();
-    let feed_url = matches.value_of("feed_url").unwrap_or_default();
+    let config = Arc::new(AppConfig::from_cli_args()?);
+ 
 
     // setup https client
     let https = HttpsConnector::new();
     let client = Client::builder().build::<_, hyper::Body>(https);
 
     // grab rss channel
-    let channel = get_rss_channel(feed_url.parse()?, client.clone()).await?;
+    let channel = get_rss_channel(client.clone(), Arc::clone(&config)).await?;
 
     // spawn new download task for each item and collect futures
     let mut downloads = channel
         .items()
         .iter()
         .map(|item| {
-            let (item, client) = (item.clone(), client.clone());
-            task::spawn(async move { download_enclosure(item, client).await })
+            let (item, client, config) = (item.clone(), client.clone(), Arc::clone(&config));
+            task::spawn(async move { download_enclosure(item, client, config).await })
         })
         .collect::<FuturesUnordered<_>>();
 
@@ -150,13 +140,9 @@ async fn get_redirect_until(
     .into())
 }
 
-async fn download_audio_file(url: Uri, title: &str, client: HttpsClient) -> AsyncResult<()> {
+async fn download_audio_file(url: Uri, title: &str, client: HttpsClient, config: Arc<AppConfig>) -> AsyncResult<()> {
     let filename = filename_from_title(title);
-    if title.starts_with("Episode") {
-        info!("Skipping main episode: {}", title);
-        return Ok(());
-    }
-    let mut file = create_file_in_dir(&filename, "episodes").await?;
+    let mut file = create_file_in_dir(&filename, &config.get_output_directory()).await?;
 
     info!("Downloading file: {}", &filename);
     let mut resp = get_redirect_until(url, client, 10).await?;
@@ -168,22 +154,27 @@ async fn download_audio_file(url: Uri, title: &str, client: HttpsClient) -> Asyn
     Ok(())
 }
 
-async fn download_enclosure(item: Item, client: HttpsClient) -> AsyncResult<()> {
+async fn download_enclosure(item: Item, client: HttpsClient, config: Arc<AppConfig>) -> AsyncResult<()> {
     if let Item {
         title: Some(title),
         enclosure: Some(Enclosure { url, .. }),
         ..
     } = item
     {
-        info!("Parsed RSS item: {} with enclosure at: {}", title, url);
-        download_audio_file(url.parse()?, &title, client).await
+        info!("Parsed RSS item: {} with enclosure at: {}", &title, &url);
+        if config.check_valid(&title) {
+            download_audio_file(url.parse()?, &title, client, config).await
+        } else {
+            info!("Skipping due to regex rules: {}", &title);
+            Ok(())
+        }
     } else {
-        Err(format!("Failed to parse RSS item: {:?}\n", item).into())
+        Err(format!("Failed to parse RSS item: {:?}", item).into())
     }
 }
 
-async fn get_rss_channel(url: Uri, client: HttpsClient) -> AsyncResult<Channel> {
-    let resp = client.get(url).await?;
+async fn get_rss_channel(client: HttpsClient, config: Arc<AppConfig>) -> AsyncResult<Channel> {
+    let resp = client.get(config.get_feed_uri()).await?;
     let content = body::to_bytes(resp.into_body()).await?;
     let channel = Channel::read_from(&content[..])?;
     info!(

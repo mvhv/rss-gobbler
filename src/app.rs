@@ -1,10 +1,11 @@
-use crate::types::{AsyncResult, HttpsClient, BoxedSendSyncError};
+use crate::types::{AsyncResult, BoxedSendSyncError};
 use crate::config::AppConfig;
 
 use futures::stream::{FuturesUnordered, StreamExt as _};
 
 use hyper::body::{self, HttpBody};
-use hyper::{Body, Client, Uri};
+use hyper::{Body, Client, Response, Uri};
+use hyper::client::connect::Connect;
 use hyper_tls::HttpsConnector;
 use tokio::io::AsyncWriteExt as _;
 use tokio::fs::{DirBuilder, OpenOptions, File};
@@ -81,11 +82,13 @@ async fn create_file_in_dir(filename: &str, directory: &str) -> AsyncResult<File
 }
 
 
-async fn get_redirect_until(
+async fn get_redirect_until<C>(
     url: Uri,
-    client: HttpsClient,
+    client: Client<C>,
     max_hops: u8,
-) -> AsyncResult<hyper::Response<Body>> {
+) -> AsyncResult<Response<Body>>
+where C: Connect + Clone + Send + Sync + 'static
+{
     let mut location = url.clone();
     for _ in 0..max_hops {
         let resp = client.get(location.clone()).await?;
@@ -135,12 +138,14 @@ async fn get_redirect_until(
 }
 
 
-async fn download_audio_file(
+async fn download_audio_file<C>(
     url: Uri,
     title: &str,
-    client: HttpsClient,
+    client: Client<C>,
     config: Arc<AppConfig>,
-) -> AsyncResult<()> {
+) -> AsyncResult<()>
+where C: Connect + Clone + Send + Sync + 'static
+{
     let filename = filename_from_title(title);
     let mut file = create_file_in_dir(&filename, &config.get_output_directory()).await?;
 
@@ -155,11 +160,13 @@ async fn download_audio_file(
 }
 
 
-async fn download_enclosure(
+async fn download_enclosure<C>(
     item: Item,
-    client: HttpsClient,
+    client: Client<C>,
     config: Arc<AppConfig>,
-) -> AsyncResult<()> {
+) -> AsyncResult<()>
+where C: Connect + Clone + Send + Sync + 'static
+{
     if let Item {
         title: Some(title),
         enclosure: Some(Enclosure { url, .. }),
@@ -167,7 +174,7 @@ async fn download_enclosure(
     } = item
     {
         info!("Parsed RSS item: {} with enclosure at: {}", &title, &url);
-        if config.check_valid(&title) {
+        if config.is_pattern_valid(&title) {
             download_audio_file(url.parse()?, &title, client, config).await
         } else {
             info!("Skipping due to regex rules: {}", &title);
@@ -179,7 +186,9 @@ async fn download_enclosure(
 }
 
 
-async fn get_rss_channel(client: HttpsClient, config: Arc<AppConfig>) -> AsyncResult<Channel> {
+async fn get_rss_channel<C>(client: Client<C>, config: Arc<AppConfig>) -> AsyncResult<Channel>
+where C: Connect + Clone + Send + Sync + 'static
+{
     let resp = client.get(config.get_feed_uri()).await?;
     let content = body::to_bytes(resp.into_body()).await?;
     let channel = Channel::read_from(&content[..])?;

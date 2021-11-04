@@ -1,11 +1,10 @@
+mod app;
 mod config;
 mod types;
-mod app;
 
-use crate::types::AsyncResult;
-use crate::config::AppConfig;
 use crate::app::run;
-
+use crate::config::AppConfig;
+use crate::types::AsyncResult;
 
 #[tokio::main]
 async fn main() -> AsyncResult<()> {

@@ -53,7 +53,7 @@ impl AppConfig {
         self.output_path.clone()
     }
 
-    pub fn check_valid(&self, pattern: &str) -> bool {
+    pub fn is_pattern_valid(&self, pattern: &str) -> bool {
         let include = if let Some(regex) = &self.option_include_regex {
             regex.is_match(pattern)
         } else {
@@ -118,5 +118,46 @@ impl AppConfig {
             Ok(config) => Ok(config),
             Err(err) => Err(format!("Failed to build AppConfig: {}", err).into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mock_appconfig(has_some_regex: bool) -> AppConfig {
+        let feed_url = "https://rss.example.com/podcast";
+        let output_path = "/output/path";
+        let include_pattern = r"^dog";
+        let exclude_pattern = r"c.*t";
+
+        AppConfig::new(
+            feed_url,
+            output_path,
+            if has_some_regex {
+                Some(include_pattern)
+            } else {
+                None
+            },
+            if has_some_regex {
+                Some(exclude_pattern)
+            } else {
+                None
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_appconfig_regex() {
+        let config_none = mock_appconfig(false);
+        assert_eq!(config_none.is_pattern_valid("dog episode"), true);
+        assert_eq!(config_none.is_pattern_valid("episode"), true);
+        assert_eq!(config_none.is_pattern_valid("dog casdat"), true);
+
+        let config_some = mock_appconfig(true);
+        assert_eq!(config_some.is_pattern_valid("dog episode"), true); // meets start with dog
+        assert_eq!(config_some.is_pattern_valid("episode"), false); // doesn't start with dog
+        assert_eq!(config_some.is_pattern_valid("dog casdat"), false); // starts with dog but contains c.*t
     }
 }
